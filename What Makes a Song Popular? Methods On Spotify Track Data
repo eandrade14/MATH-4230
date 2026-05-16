@@ -1,0 +1,1259 @@
+# =============================================================
+#  MATH 4230 Capstone — Chapter 1: Introduction & Statistical Thinking
+#  Purpose: Generate figures for Spotify popularity analysis
+# =============================================================
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from statsmodels.nonparametric.smoothers_lowess import lowess
+
+# ── 0. Style config ──────────────────────────────────────────────────────────
+plt.rcParams.update({
+    "figure.dpi":        150,
+    "font.family":       "serif",
+    "axes.spines.top":   False,
+    "axes.spines.right": False,
+    "axes.titlesize":    13,
+    "axes.labelsize":    11,
+    "xtick.labelsize":   9,
+    "ytick.labelsize":   9,
+})
+
+BLUE   = "#1262FF"
+GREEN  = "#1ED760"
+GRAY   = "#787878"
+LIGHT  = "#F5F5F5"
+DARK   = "#191414"
+
+# ── 1. Load data ─────────────────────────────────────────────────────────────
+DATA_PATH = "spotify-tracks-dataset-detailed.csv"
+df = pd.read_csv(DATA_PATH)
+
+df = df.dropna(subset=["artists", "album_name", "track_name"]).copy()
+
+print(f"Loaded {len(df):,} tracks across {df['track_genre'].nunique()} genres")
+print(f"Popularity — mean: {df['popularity'].mean():.1f}, "
+      f"median: {df['popularity'].median():.0f}, "
+      f"std: {df['popularity'].std():.1f}")
+
+MEDIAN_POP = int(df["popularity"].median())
+df["is_popular"] = (df["popularity"] > MEDIAN_POP).astype(int)
+
+print(f"Binary threshold (median popularity): {MEDIAN_POP}")
+print(f"Popular tracks: {df['is_popular'].sum():,} "
+      f"({df['is_popular'].mean()*100:.1f}%)")
+
+# =============================================================================
+# FIGURE 1 — Popularity distribution + binary class boxplot
+# =============================================================================
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), facecolor="white")
+fig.suptitle("Distribution of Track Popularity (n = 114,000)",
+             fontsize=14, fontweight="bold", y=1.01)
+
+ax = axes[0]
+counts, bins, patches = ax.hist(
+    df["popularity"], bins=50, edgecolor="white", linewidth=0.4, alpha=0.85
+)
+
+for patch, left in zip(patches, bins[:-1]):
+    if left == 0:
+        patch.set_facecolor(DARK)
+    elif left < MEDIAN_POP:
+        patch.set_facecolor(GRAY)
+    else:
+        patch.set_facecolor(GREEN)
+
+ax.axvline(MEDIAN_POP, color=BLUE, linewidth=1.8, linestyle="--")
+ax.axvline(df["popularity"].mean(), color="tomato", linewidth=1.8, linestyle=":")
+ax.set_xlabel("Popularity Score (0–100)")
+ax.set_ylabel("Number of Tracks")
+ax.set_title("Histogram of Popularity Scores")
+
+zero_patch = mpatches.Patch(color=DARK, label="Score = 0")
+low_patch  = mpatches.Patch(color=GRAY, label=f"Score 1–{MEDIAN_POP-1}")
+high_patch = mpatches.Patch(color=GREEN, label=f"Score ≥ {MEDIAN_POP}")
+med_line   = plt.Line2D([0], [0], color=BLUE, linestyle="--",
+                        linewidth=1.8, label=f"Median = {MEDIAN_POP}")
+mean_line  = plt.Line2D([0], [0], color="tomato", linestyle=":",
+                        linewidth=1.8, label=f"Mean = {df['popularity'].mean():.1f}")
+
+ax.legend(handles=[zero_patch, low_patch, high_patch, med_line, mean_line],
+          loc="upper right", fontsize=7.5)
+
+ax2 = axes[1]
+colors_map = {0: GRAY, 1: GREEN}
+
+for cls in [0, 1]:
+    subset = df[df["is_popular"] == cls]["popularity"]
+    ax2.boxplot(
+        subset,
+        positions=[cls + 1],
+        widths=0.4,
+        patch_artist=True,
+        medianprops=dict(color="white", linewidth=2),
+        boxprops=dict(facecolor=colors_map[cls], alpha=0.7),
+        whiskerprops=dict(color=DARK),
+        capprops=dict(color=DARK),
+        flierprops=dict(marker=".", markersize=1,
+                        color=colors_map[cls], alpha=0.2)
+    )
+
+    med = subset.median()
+    ax2.text(cls + 1.25, med, f"{med:.0f}",
+             va="center", fontsize=9, color=DARK)
+
+ax2.set_xticks([1, 2])
+ax2.set_xticklabels([
+    f"Not Popular\n(score ≤ {MEDIAN_POP})",
+    f"Popular\n(score > {MEDIAN_POP})"
+])
+ax2.set_ylabel("Popularity Score")
+ax2.set_title("Distribution by Binary Class")
+ax2.set_xlim(0.5, 2.5)
+
+plt.tight_layout()
+plt.savefig("ch1_popularity_distribution.png", dpi=300, bbox_inches="tight")
+
+# =============================================================================
+# FIGURE 2 — Median popularity by genre
+# =============================================================================
+genre_stats = (
+    df.groupby("track_genre")["popularity"]
+    .agg(median="median", mean="mean", count="count")
+    .reset_index()
+    .sort_values("median", ascending=False)
+)
+
+top20 = genre_stats.head(20)
+bottom10 = genre_stats.tail(10)
+display_df = pd.concat([top20, bottom10], ignore_index=True)
+
+fig, ax = plt.subplots(figsize=(13, 7), facecolor="white")
+
+bar_colors = [GREEN] * 20 + [DARK] * 10
+bars = ax.barh(
+    display_df["track_genre"],
+    display_df["median"],
+    color=bar_colors,
+    edgecolor="white",
+    height=0.7
+)
+
+for bar, val in zip(bars, display_df["median"]):
+    ax.text(val + 0.5, bar.get_y() + bar.get_height() / 2,
+            f"{val:.0f}", va="center", ha="left",
+            fontsize=8, color=DARK)
+
+ax.axhline(y=9.5, color="gray", linestyle="--", linewidth=1, alpha=0.6)
+ax.text(62, 9.7, "← Bottom 10 genres", fontsize=8, color=GRAY)
+ax.text(62, 10.3, "← Top 20 genres", fontsize=8, color=GRAY)
+
+ax.axvline(MEDIAN_POP, color=BLUE, linewidth=1.5, linestyle=":", alpha=0.8)
+ax.set_xlabel("Median Popularity Score")
+ax.set_title("Median Track Popularity by Genre\nTop 20 and Bottom 10 Genres",
+             fontsize=13, fontweight="bold")
+ax.set_xlim(0, 80)
+
+top_patch = mpatches.Patch(color=GREEN, label="Top 20 genres")
+bot_patch = mpatches.Patch(color=DARK, label="Bottom 10 genres")
+med_line = plt.Line2D([0], [0], color=BLUE, linestyle=":",
+                      linewidth=1.5, label=f"Overall median = {MEDIAN_POP}")
+
+ax.legend(handles=[top_patch, bot_patch, med_line], loc="lower right")
+
+plt.tight_layout()
+plt.savefig("ch2_genre_median_popularity.png", dpi=300, bbox_inches="tight")
+
+# =============================================================================
+# FIGURE 3 — Popularity vs. 4 audio features with LOWESS trend
+# =============================================================================
+np.random.seed(42)
+sample = df.sample(n=min(8000, len(df)), random_state=42)
+
+features = [
+    ("loudness", "Loudness (dB)", "Range: −60 to 0 dB"),
+    ("energy", "Energy", "Range: 0 to 1"),
+    ("danceability", "Danceability", "Range: 0 to 1"),
+    ("acousticness", "Acousticness", "Range: 0 to 1"),
+]
+
+fig, axes = plt.subplots(1, 4, figsize=(15, 4.5), facecolor="white")
+fig.suptitle(
+    "Popularity vs. Key Audio Features "
+    "(n = 8,000 sampled tracks, LOWESS trend shown)",
+    fontsize=13, fontweight="bold", y=1.02
+)
+
+for ax, (feat, xlabel, note) in zip(axes, features):
+    x = sample[feat].values
+    y = sample["popularity"].values
+
+    ax.scatter(x, y, alpha=0.08, s=8, color=GREEN, rasterized=True)
+
+    sorted_idx = np.argsort(x)
+    smoothed = lowess(
+        y[sorted_idx],
+        x[sorted_idx],
+        frac=0.15,
+        return_sorted=True
+    )
+    ax.plot(smoothed[:, 0], smoothed[:, 1], color="tomato", linewidth=2.2)
+
+    corr = np.corrcoef(x, y)[0, 1]
+    ax.text(
+        0.05, 0.93, f"r = {corr:.3f}",
+        transform=ax.transAxes,
+        fontsize=9,
+        color=DARK,
+        fontweight="bold",
+        bbox=dict(facecolor="white", alpha=0.7, edgecolor="none")
+    )
+
+    ax.set_xlabel(xlabel, fontsize=10)
+    ax.set_ylabel("Popularity" if ax == axes[0] else "")
+    ax.set_title(feat.capitalize())
+    ax.set_ylim(-2, 102)
+    ax.text(0.5, -0.18, note, transform=ax.transAxes,
+            fontsize=7.5, ha="center", color=GRAY)
+
+plt.tight_layout()
+plt.savefig("ch3_feature_relationships.png", dpi=300, bbox_inches="tight")
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+import seaborn as sns
+import warnings
+
+warnings.filterwarnings("ignore")
+
+# ── Style ─────────────────────────────────────────────────────────────────────
+plt.rcParams.update({
+    "figure.dpi"       : 150,
+    "font.family"      : "serif",
+    "axes.spines.top"  : False,
+    "axes.spines.right": False,
+    "axes.titlesize"   : 11,
+    "axes.labelsize"   : 10,
+    "xtick.labelsize"  : 8,
+    "ytick.labelsize"  : 8,
+})
+
+GREEN = "#1ED760"
+DARK  = "#191414"
+GRAY  = "#787878"
+BLUE  = "#1262FF"
+RED   = "#E8394A"
+
+# ── Load & clean ──────────────────────────────────────────────────────────────
+df = pd.read_csv("spotify-tracks-dataset-detailed.csv")
+df = df.dropna(subset=["artists", "album_name", "track_name"]).reset_index(drop=True)
+
+# Derive binary response (threshold = median = 35)
+MEDIAN_POP = int(df["popularity"].median())
+df["is_popular"] = (df["popularity"] > MEDIAN_POP).astype(int)
+
+# Fix sentinel values (tempo=0 and time_signature=0 mean "unknown")
+df["tempo"]          = df["tempo"].replace(0, np.nan)
+df["time_signature"] = df["time_signature"].replace(0, np.nan)
+
+NUMERIC_FEATURES = [
+    "danceability", "energy", "loudness", "speechiness",
+    "acousticness", "instrumentalness", "liveness", "valence",
+    "tempo", "duration_ms", "key", "mode", "time_signature"
+]
+
+AUDIO_FEATURES = [
+    "danceability", "energy", "loudness", "speechiness",
+    "acousticness", "instrumentalness", "liveness", "valence",
+    "tempo", "duration_ms", "key", "time_signature", "mode"
+]
+
+# ── Train / val / test split (70 / 15 / 15, stratified) ──────────────────────
+# This split is created here and reused across all chapters
+X = df.drop(columns=["popularity", "is_popular",
+                       "track_id", "artists", "album_name", "track_name"])
+y_cont = df["popularity"]
+y_bin  = df["is_popular"]
+
+X_trainval, X_test, y_cont_trainval, y_cont_test, y_bin_trainval, y_bin_test = \
+    train_test_split(X, y_cont, y_bin, test_size=0.15,
+                     random_state=42, stratify=y_bin)
+
+X_train, X_val, y_cont_train, y_cont_val, y_bin_train, y_bin_val = \
+    train_test_split(X_trainval, y_cont_trainval, y_bin_trainval,
+                     test_size=0.15 / 0.85,
+                     random_state=42, stratify=y_bin_trainval)
+
+print(f"Train:      {len(X_train):,} rows")
+print(f"Validation: {len(X_val):,} rows")
+print(f"Test:       {len(X_test):,} rows")
+
+
+# =============================================================================
+# FIGURE 1 — Histograms of all 13 continuous audio features
+# =============================================================================
+fig, axes = plt.subplots(3, 5, figsize=(16, 9), facecolor="white")
+fig.suptitle("Distributions of Audio Features (n = 113,999)",
+             fontsize=14, fontweight="bold", y=1.01)
+
+# Feature display names and optional log flag
+feature_meta = [
+    ("danceability",     "Danceability",     False),
+    ("energy",           "Energy",           False),
+    ("loudness",         "Loudness (dB)",    False),
+    ("speechiness",      "Speechiness",      False),
+    ("acousticness",     "Acousticness",     False),
+    ("instrumentalness", "Instrumentalness", False),
+    ("liveness",         "Liveness",         False),
+    ("valence",          "Valence",          False),
+    ("tempo",            "Tempo (BPM)",      False),
+    ("duration_ms",      "Duration (ms)",    True),   # log scale
+    ("key",              "Key (0–11)",       False),
+    ("time_signature",   "Time Signature",   False),
+    ("mode",             "Mode (0/1)",       False),
+]
+
+axes_flat = axes.flatten()
+
+for i, (feat, label, use_log) in enumerate(feature_meta):
+    ax = axes_flat[i]
+    data = df[feat].dropna()
+    if use_log:
+        data = np.log(data + 1)
+        label = f"log({label})"
+
+    # Histogram
+    n_bins = 30 if feat not in ["key", "mode", "time_signature"] else \
+             (12 if feat == "key" else (2 if feat == "mode" else 6))
+    ax.hist(data, bins=n_bins, color=GREEN, edgecolor="white",
+            linewidth=0.3, alpha=0.8, density=True)
+
+    # KDE overlay using numpy
+    from scipy.stats import gaussian_kde
+    try:
+        kde = gaussian_kde(data.dropna(), bw_method=0.3)
+        x_range = np.linspace(data.min(), data.max(), 200)
+        ax.plot(x_range, kde(x_range), color=DARK, linewidth=1.5)
+    except Exception:
+        pass
+
+    # Median line
+    ax.axvline(data.median(), color=BLUE, linewidth=1.2,
+               linestyle="--", alpha=0.8)
+
+    ax.set_title(label, fontsize=9, fontweight="bold")
+    ax.set_xlabel("")
+    ax.set_ylabel("Density" if i % 5 == 0 else "")
+    ax.tick_params(labelsize=7)
+
+# Hide unused subplot (we have 13 features, 15 slots)
+for j in range(len(feature_meta), len(axes_flat)):
+    axes_flat[j].set_visible(False)
+
+# Add a shared legend note
+fig.text(0.5, -0.01,
+         "Blue dashed line = median. Green bars = density histogram. "
+         "Duration shown on log scale.",
+         ha="center", fontsize=8, color=GRAY)
+
+plt.tight_layout()
+plt.savefig("ch2_distributions.png", dpi=300, bbox_inches="tight")
+
+# =============================================================================
+# FIGURE 2 — Feature boxplots by popular class
+# =============================================================================
+# Use the 8 most interpretable continuous features for the boxplots
+BOX_FEATURES = [
+    ("danceability",     "Danceability"),
+    ("energy",           "Energy"),
+    ("loudness",         "Loudness (dB)"),
+    ("acousticness",     "Acousticness"),
+    ("instrumentalness", "Instrumentalness"),
+    ("valence",          "Valence"),
+    ("speechiness",      "Speechiness"),
+    ("liveness",         "Liveness"),
+]
+
+fig, axes = plt.subplots(2, 4, figsize=(15, 7), facecolor="white")
+fig.suptitle("Audio Features by Popularity Class\n(Green = Popular  |  Gray = Not Popular)",
+             fontsize=13, fontweight="bold", y=1.02)
+
+axes_flat = axes.flatten()
+
+for i, (feat, label) in enumerate(BOX_FEATURES):
+    ax = axes_flat[i]
+
+    pop_data   = df[df["is_popular"] == 1][feat].dropna()
+    unpop_data = df[df["is_popular"] == 0][feat].dropna()
+
+    bp = ax.boxplot(
+        [unpop_data, pop_data],
+        positions=[1, 2],
+        widths=0.5,
+        patch_artist=True,
+        medianprops=dict(color="white", linewidth=2.0),
+        whiskerprops=dict(color=DARK, linewidth=0.8),
+        capprops=dict(color=DARK, linewidth=0.8),
+        flierprops=dict(marker=".", markersize=1.5,
+                        color=GRAY, alpha=0.15),
+        boxprops=dict(linewidth=0)
+    )
+
+    # Color the boxes
+    bp["boxes"][0].set_facecolor(GRAY)
+    bp["boxes"][0].set_alpha(0.75)
+    bp["boxes"][1].set_facecolor(GREEN)
+    bp["boxes"][1].set_alpha(0.75)
+
+    # Annotate medians
+    for pos, data, color in [(1, unpop_data, DARK), (2, pop_data, DARK)]:
+        med = data.median()
+        ax.text(pos + 0.3, med, f"{med:.2f}",
+                va="center", fontsize=7.5, color=color)
+
+    ax.set_title(label, fontsize=10, fontweight="bold")
+    ax.set_xticks([1, 2])
+    ax.set_xticklabels(["Not Popular", "Popular"], fontsize=8)
+    ax.set_xlim(0.4, 2.8)
+
+plt.tight_layout()
+plt.savefig("ch2_boxplots.png", dpi=300, bbox_inches="tight")
+
+# =============================================================================
+# FIGURE 3 — Pearson correlation heatmap
+# =============================================================================
+CORR_COLS = [
+    "popularity", "danceability", "energy", "loudness", "speechiness",
+    "acousticness", "instrumentalness", "liveness", "valence",
+    "tempo", "duration_ms", "mode", "time_signature"
+]
+
+CORR_LABELS = [
+    "Popularity", "Danceability", "Energy", "Loudness", "Speechiness",
+    "Acousticness", "Instrumentalness", "Liveness", "Valence",
+    "Tempo", "Duration", "Mode", "Time Sig."
+]
+
+corr_matrix = df[CORR_COLS].corr()
+
+# Custom diverging colormap: red → white → green
+from matplotlib.colors import LinearSegmentedColormap
+cmap = LinearSegmentedColormap.from_list(
+    "rg_diverge", [RED, "white", GREEN], N=256
+)
+
+fig, ax = plt.subplots(figsize=(11, 9), facecolor="white")
+
+im = ax.imshow(corr_matrix.values, cmap=cmap, vmin=-1, vmax=1, aspect="auto")
+
+# Axis labels
+ax.set_xticks(range(len(CORR_LABELS)))
+ax.set_yticks(range(len(CORR_LABELS)))
+ax.set_xticklabels(CORR_LABELS, rotation=45, ha="right", fontsize=9)
+ax.set_yticklabels(CORR_LABELS, fontsize=9)
+
+# Annotate cells with r values; bold the diagonal and anything |r|>0.3
+for i in range(len(CORR_LABELS)):
+    for j in range(len(CORR_LABELS)):
+        val = corr_matrix.values[i, j]
+        weight = "bold" if abs(val) > 0.3 or i == j else "normal"
+        color  = "white" if abs(val) > 0.6 else DARK
+        ax.text(j, i, f"{val:.2f}", ha="center", va="center",
+                fontsize=7, color=color, fontweight=weight)
+
+# Colorbar
+cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+cbar.set_label("Pearson r", fontsize=9)
+cbar.ax.tick_params(labelsize=8)
+
+ax.set_title("Pearson Correlation Matrix — Audio Features + Popularity",
+             fontsize=12, fontweight="bold", pad=15)
+
+# Highlight the popularity row/column with a box
+for spine in ax.spines.values():
+    spine.set_visible(False)
+
+plt.tight_layout()
+plt.savefig("ch2_corr.png", dpi=300, bbox_inches="tight")
+
+"""
+MATH 4230 — Capstone Project
+Chapter 3: Simple Linear Regression
+Author: Ezequiel Andrade
+
+Figures produced (display only — save manually):
+  Figure 1 — ch3_scatter.png      : loudness vs popularity with SLR line + CI band
+  Figure 2 — ch3_diagnostics.png  : 4-panel residual diagnostic plots
+  Figure 3 — ch3_r2_compare.png   : marginal R² bar chart for all 13 features
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from scipy import stats
+from sklearn.model_selection import train_test_split
+import warnings
+
+warnings.filterwarnings("ignore")
+
+# ── Style ─────────────────────────────────────────────────────────────────────
+plt.rcParams.update({
+    "figure.dpi"       : 150,
+    "font.family"      : "serif",
+    "axes.spines.top"  : False,
+    "axes.spines.right": False,
+    "axes.titlesize"   : 12,
+    "axes.labelsize"   : 10,
+    "xtick.labelsize"  : 9,
+    "ytick.labelsize"  : 9,
+})
+
+GREEN = "#1ED760"
+DARK  = "#191414"
+GRAY  = "#787878"
+BLUE  = "#1262FF"
+RED   = "#E8394A"
+
+# ── Load & split ──────────────────────────────────────────────────────────────
+df = pd.read_csv("spotify-tracks-dataset-detailed.csv")
+df = df.dropna(subset=["artists", "album_name", "track_name"]).reset_index(drop=True)
+df["is_popular"] = (df["popularity"] > 35).astype(int)
+
+# Same stratified 70/15/15 split used across all chapters
+X_all = df[["loudness"]]
+y_all = df["popularity"]
+yb    = df["is_popular"]
+
+X_tv, X_test, y_tv, y_test, yb_tv, yb_test = train_test_split(
+    X_all, y_all, yb, test_size=0.15, random_state=42, stratify=yb)
+X_train, X_val, y_train, y_val, _, _ = train_test_split(
+    X_tv, y_tv, yb_tv, test_size=0.15/0.85, random_state=42, stratify=yb_tv)
+
+x_train = X_train["loudness"].values
+x_test  = X_test["loudness"].values
+
+# ── Fit SLR on training set ───────────────────────────────────────────────────
+slope, intercept, r_val, p_val, se = stats.linregress(x_train, y_train.values)
+r2 = r_val ** 2
+
+# Predictions and residuals on training set
+y_pred_train = intercept + slope * x_train
+resid        = y_train.values - y_pred_train
+
+# Test performance
+y_pred_test = intercept + slope * x_test
+test_rmse   = np.sqrt(np.mean((y_test.values - y_pred_test) ** 2))
+test_r2     = 1 - np.sum((y_test.values - y_pred_test)**2) / \
+                  np.sum((y_test.values - y_test.mean())**2)
+
+print(f"Intercept : {intercept:.4f}")
+print(f"Slope     : {slope:.4f}")
+print(f"R²        : {r2:.5f}")
+print(f"Test RMSE : {test_rmse:.4f}")
+print(f"Test R²   : {test_r2:.5f}")
+
+
+# =============================================================================
+# FIGURE 1 — Scatter plot with SLR line and 95% confidence band
+# =============================================================================
+np.random.seed(42)
+# Sample 8000 points for visual clarity (full 80k overplots completely)
+idx_sample = np.random.choice(len(x_train), size=8000, replace=False)
+x_samp = x_train[idx_sample]
+y_samp = y_train.values[idx_sample]
+
+# Confidence band: SE of mean prediction
+n_train  = len(x_train)
+x_mean   = x_train.mean()
+ss_x     = np.sum((x_train - x_mean) ** 2)
+x_line   = np.linspace(x_train.min(), x_train.max(), 300)
+y_line   = intercept + slope * x_line
+
+# Standard error of fitted mean at each x_line point
+se_fit  = np.sqrt(
+    (np.sum(resid**2) / (n_train - 2)) *
+    (1/n_train + (x_line - x_mean)**2 / ss_x)
+)
+t_crit  = stats.t.ppf(0.975, df=n_train - 2)
+ci_lo   = y_line - t_crit * se_fit
+ci_hi   = y_line + t_crit * se_fit
+
+fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="white")
+
+# Scatter
+ax.scatter(x_samp, y_samp, alpha=0.07, s=6, color=GRAY,
+           rasterized=True, label="_nolegend_")
+
+# Confidence band
+ax.fill_between(x_line, ci_lo, ci_hi, alpha=0.25, color=BLUE,
+                label="95% confidence band")
+
+# Regression line
+ax.plot(x_line, y_line, color=BLUE, linewidth=2.2,
+        label=f"$\\hat{{y}} = {intercept:.2f} + {slope:.3f} \\times$ loudness")
+
+# Annotation box
+ax.text(0.03, 0.93,
+        f"$R^2 = {r2:.4f}$\nRMSE (test) $= {test_rmse:.2f}$\n"
+        f"$n_{{train}} = {n_train:,}$",
+        transform=ax.transAxes, fontsize=9.5,
+        verticalalignment="top",
+        bbox=dict(facecolor="white", edgecolor=GRAY,
+                  boxstyle="round,pad=0.4", alpha=0.9))
+
+ax.set_xlabel("Loudness (dB)")
+ax.set_ylabel("Popularity Score (0–100)")
+ax.set_title("Simple Linear Regression: Loudness → Popularity\n"
+             "(8,000 training points shown; line fit on all 79,799)",
+             fontweight="bold")
+ax.legend(fontsize=9, loc="lower right")
+ax.set_ylim(-5, 105)
+
+plt.tight_layout()
+plt.savefig("ch3_scatter.png", dpi=300, bbox_inches="tight")
+
+# =============================================================================
+# FIGURE 2 — 4-panel residual diagnostics
+# =============================================================================
+# Standardized residuals
+resid_std = (resid - resid.mean()) / resid.std()
+y_fitted  = y_pred_train
+
+fig, axes = plt.subplots(2, 2, figsize=(11, 8), facecolor="white")
+fig.suptitle("SLR Residual Diagnostics", fontsize=13,
+             fontweight="bold", y=1.01)
+
+# Subsample for plot speed
+idx_diag = np.random.choice(len(resid), size=6000, replace=False)
+
+# ── Panel 1: Residuals vs Fitted ──────────────────────────────────────────────
+ax = axes[0, 0]
+ax.scatter(y_fitted[idx_diag], resid[idx_diag],
+           alpha=0.06, s=5, color=BLUE, rasterized=True)
+ax.axhline(0, color=RED, linewidth=1.5, linestyle="--")
+
+# LOWESS smoother on residuals
+from statsmodels.nonparametric.smoothers_lowess import lowess
+sorted_i  = np.argsort(y_fitted[idx_diag])
+smoothed  = lowess(resid[idx_diag][sorted_i],
+                   y_fitted[idx_diag][sorted_i],
+                   frac=0.2, return_sorted=True)
+ax.plot(smoothed[:, 0], smoothed[:, 1], color=RED,
+        linewidth=1.8, label="LOWESS trend")
+ax.set_xlabel("Fitted Values")
+ax.set_ylabel("Residuals")
+ax.set_title("Residuals vs. Fitted Values")
+ax.legend(fontsize=8)
+
+# ── Panel 2: Q-Q plot ─────────────────────────────────────────────────────────
+ax = axes[0, 1]
+(osm, osr), (slope_qq, intercept_qq, r_qq) = \
+    stats.probplot(resid_std[idx_diag], dist="norm")
+ax.scatter(osm, osr, alpha=0.08, s=5, color=BLUE, rasterized=True)
+qq_line = np.array([min(osm), max(osm)])
+ax.plot(qq_line, intercept_qq + slope_qq * qq_line,
+        color=RED, linewidth=1.8, linestyle="--", label="Normal reference")
+ax.set_xlabel("Theoretical Quantiles")
+ax.set_ylabel("Standardized Residuals")
+ax.set_title("Normal Q–Q Plot")
+ax.legend(fontsize=8)
+
+# ── Panel 3: Scale-Location ───────────────────────────────────────────────────
+ax = axes[1, 0]
+sqrt_abs_resid = np.sqrt(np.abs(resid_std[idx_diag]))
+ax.scatter(y_fitted[idx_diag], sqrt_abs_resid,
+           alpha=0.06, s=5, color=BLUE, rasterized=True)
+sorted_i2 = np.argsort(y_fitted[idx_diag])
+sl_smooth = lowess(sqrt_abs_resid[sorted_i2],
+                   y_fitted[idx_diag][sorted_i2],
+                   frac=0.2, return_sorted=True)
+ax.plot(sl_smooth[:, 0], sl_smooth[:, 1], color=RED, linewidth=1.8)
+ax.set_xlabel("Fitted Values")
+ax.set_ylabel("$\\sqrt{|\\text{Standardized Residuals}|}$")
+ax.set_title("Scale–Location")
+
+# ── Panel 4: Residuals vs Loudness ───────────────────────────────────────────
+ax = axes[1, 1]
+ax.scatter(x_train[idx_diag], resid[idx_diag],
+           alpha=0.06, s=5, color=BLUE, rasterized=True)
+ax.axhline(0, color=RED, linewidth=1.5, linestyle="--")
+sorted_i3  = np.argsort(x_train[idx_diag])
+lx_smooth  = lowess(resid[idx_diag][sorted_i3],
+                    x_train[idx_diag][sorted_i3],
+                    frac=0.2, return_sorted=True)
+ax.plot(lx_smooth[:, 0], lx_smooth[:, 1], color=RED, linewidth=1.8)
+ax.set_xlabel("Loudness (dB)")
+ax.set_ylabel("Residuals")
+ax.set_title("Residuals vs. Loudness (Predictor)")
+
+# Residual summary annotation
+ax.text(0.03, 0.97,
+        f"Skewness = {float(pd.Series(resid).skew()):.3f}\n"
+        f"Kurtosis = {float(pd.Series(resid).kurtosis()):.3f}",
+        transform=ax.transAxes, fontsize=8.5,
+        verticalalignment="top",
+        bbox=dict(facecolor="white", edgecolor=GRAY,
+                  boxstyle="round,pad=0.3", alpha=0.85))
+
+plt.tight_layout()
+plt.savefig("ch3_diagnostics.png", dpi=300, bbox_inches="tight")
+
+
+# =============================================================================
+# FIGURE 3 — Marginal R² bar chart for all 13 predictors
+# =============================================================================
+features_all = [
+    ("instrumentalness", "Instrumentalness"),
+    ("loudness",         "Loudness"),
+    ("speechiness",      "Speechiness"),
+    ("valence",          "Valence"),
+    ("danceability",     "Danceability"),
+    ("time_signature",   "Time Signature"),
+    ("acousticness",     "Acousticness"),
+    ("mode",             "Mode"),
+    ("tempo",            "Tempo"),
+    ("duration_ms",      "Duration"),
+    ("liveness",         "Liveness"),
+    ("energy",           "Energy"),
+    ("key",              "Key"),
+]
+
+r2_vals = []
+r_vals  = []
+for feat, _ in features_all:
+    xf = df[feat].fillna(df[feat].median())
+    _, _, r_f, _, _ = stats.linregress(xf, df["popularity"])
+    r2_vals.append(r_f ** 2)
+    r_vals.append(r_f)
+
+labels     = [label for _, label in features_all]
+bar_colors = [RED if r < 0 else GREEN for r in r_vals]
+
+fig, ax = plt.subplots(figsize=(10, 5), facecolor="white")
+
+bars = ax.barh(labels, r2_vals, color=bar_colors,
+               edgecolor="white", height=0.65, alpha=0.85)
+
+# Value labels
+for bar, val, r in zip(bars, r2_vals, r_vals):
+    direction = "▼" if r < 0 else "▲"
+    ax.text(val + 0.00005, bar.get_y() + bar.get_height() / 2,
+            f"  {direction} {val:.5f}",
+            va="center", fontsize=8, color=DARK)
+
+# Highlight the chosen SLR predictor
+bars[1].set_edgecolor(BLUE)
+bars[1].set_linewidth(2)
+
+ax.set_xlabel("Marginal $R^2$ (proportion of popularity variance explained)")
+ax.set_title("Single-Predictor $R^2$ for All 13 Audio Features\n"
+             "Green = positive association  |  Red = negative association",
+             fontweight="bold")
+ax.set_xlim(0, 0.013)
+
+green_p = mpatches.Patch(color=GREEN, label="Positive relationship")
+red_p   = mpatches.Patch(color=RED,   label="Negative relationship")
+blue_l  = mpatches.Patch(edgecolor=BLUE, facecolor=GREEN,
+                          linewidth=2, label="SLR predictor (this chapter)")
+ax.legend(handles=[green_p, red_p, blue_l], fontsize=8, loc="lower right")
+
+plt.tight_layout()
+plt.savefig("ch3_r2_compare.png", dpi=300, bbox_inches="tight")
+
+"""
+MATH 4230 — Capstone Project
+Chapter 4: Multiple Linear Regression
+Author: Ezequiel Andrade
+
+Figures produced (display only — save manually):
+  Figure 1 — ch4_diagnostics.png  : 4-panel residual diagnostics
+  Figure 2 — ch4_coef_plot.png    : coefficient plot (non-genre predictors)
+  Figure 3 — ch4_genre_coefs.png  : all 113 genre coefficients bar chart
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+from statsmodels.nonparametric.smoothers_lowess import lowess
+import warnings
+
+warnings.filterwarnings("ignore")
+
+# ── Style ─────────────────────────────────────────────────────────────────────
+plt.rcParams.update({
+    "figure.dpi"       : 150,
+    "font.family"      : "serif",
+    "axes.spines.top"  : False,
+    "axes.spines.right": False,
+    "axes.titlesize"   : 11,
+    "axes.labelsize"   : 10,
+    "xtick.labelsize"  : 8,
+    "ytick.labelsize"  : 8,
+})
+
+GREEN = "#1ED760"
+DARK  = "#191414"
+GRAY  = "#787878"
+BLUE  = "#1262FF"
+RED   = "#E8394A"
+
+# ── Load & prepare ────────────────────────────────────────────────────────────
+df = pd.read_csv("spotify-tracks-dataset-detailed.csv")
+df = df.dropna(subset=["artists", "album_name", "track_name"]).reset_index(drop=True)
+df["is_popular"]   = (df["popularity"] > 35).astype(int)
+df["tempo"]        = df["tempo"].replace(0, np.nan).fillna(df["tempo"].replace(0, np.nan).median())
+df["time_signature"] = df["time_signature"].replace(0, np.nan).fillna(4.0)
+df["log_duration"] = np.log(df["duration_ms"])
+df["explicit_int"] = df["explicit"].astype(int)
+df["key_int"]      = df["key"].astype(int)
+df["ts_int"]       = df["time_signature"].astype(int)
+
+CONT = ["danceability","energy","loudness","speechiness","acousticness",
+        "instrumentalness","liveness","valence","tempo","log_duration"]
+BIN  = ["mode","explicit_int"]
+
+key_d   = pd.get_dummies(df["key_int"],       prefix="key",   drop_first=True)
+ts_d    = pd.get_dummies(df["ts_int"],         prefix="ts",    drop_first=True)
+genre_d = pd.get_dummies(df["track_genre"],    prefix="genre", drop_first=True)
+
+X_full = pd.concat([df[CONT + BIN], key_d, ts_d, genre_d], axis=1).astype(float)
+y  = df["popularity"]
+yb = df["is_popular"]
+
+# ── Train / val / test split ──────────────────────────────────────────────────
+X_tv, X_test, y_tv, y_test, yb_tv, yb_test = train_test_split(
+    X_full, y, yb, test_size=0.15, random_state=42, stratify=yb)
+X_train, X_val, y_train, y_val, _, _ = train_test_split(
+    X_tv, y_tv, yb_tv, test_size=0.15/0.85, random_state=42, stratify=yb_tv)
+
+scaler   = StandardScaler()
+X_tr_s   = scaler.fit_transform(X_train)
+X_te_s   = scaler.transform(X_test)
+
+# ── Fit full MLR ──────────────────────────────────────────────────────────────
+lr = LinearRegression().fit(X_tr_s, y_train)
+
+y_pred_train = lr.predict(X_tr_s)
+y_pred_test  = lr.predict(X_te_s)
+resid        = y_train.values - y_pred_train
+resid_std    = (resid - resid.mean()) / resid.std()
+
+test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
+test_r2   = lr.score(X_te_s, y_test)
+train_r2  = lr.score(X_tr_s, y_train)
+
+print(f"Train R²  : {train_r2:.5f}")
+print(f"Test  R²  : {test_r2:.5f}")
+print(f"Test RMSE : {test_rmse:.4f}")
+
+# ── Coefficient arrays ────────────────────────────────────────────────────────
+feat_names = X_full.columns.tolist()
+coef_df    = pd.DataFrame({"feature": feat_names, "coef": lr.coef_})
+
+# Non-genre coefficients
+non_genre = coef_df[~coef_df["feature"].str.startswith("genre_")].copy()
+non_genre_top = non_genre.reindex(
+    non_genre["coef"].abs().sort_values(ascending=False).index
+).head(15)
+
+# Genre coefficients
+genre_coefs = coef_df[coef_df["feature"].str.startswith("genre_")].copy()
+genre_coefs["genre"] = genre_coefs["feature"].str.replace("genre_", "")
+genre_coefs = genre_coefs.sort_values("coef", ascending=True)
+
+
+# =============================================================================
+# FIGURE 1 — 4-panel residual diagnostics
+# =============================================================================
+np.random.seed(42)
+idx = np.random.choice(len(resid), size=6000, replace=False)
+
+fig, axes = plt.subplots(2, 2, figsize=(12, 8), facecolor="white")
+fig.suptitle("MLR Residual Diagnostics (Full Model, Genre Included)",
+             fontsize=13, fontweight="bold", y=1.01)
+
+# Panel 1 — Residuals vs Fitted
+ax = axes[0, 0]
+ax.scatter(y_pred_train[idx], resid[idx],
+           alpha=0.05, s=5, color=BLUE, rasterized=True)
+ax.axhline(0, color=RED, linewidth=1.5, linestyle="--")
+si = np.argsort(y_pred_train[idx])
+sm = lowess(resid[idx][si], y_pred_train[idx][si], frac=0.2, return_sorted=True)
+ax.plot(sm[:, 0], sm[:, 1], color=RED, linewidth=2)
+ax.set_xlabel("Fitted Values")
+ax.set_ylabel("Residuals")
+ax.set_title("Residuals vs. Fitted Values")
+
+# Panel 2 — Q-Q plot
+from scipy import stats as scipy_stats
+ax = axes[0, 1]
+(osm, osr), (slope_qq, intercept_qq, _) = \
+    scipy_stats.probplot(resid_std[idx], dist="norm")
+ax.scatter(osm, osr, alpha=0.07, s=5, color=BLUE, rasterized=True)
+qq_x = np.array([min(osm), max(osm)])
+ax.plot(qq_x, intercept_qq + slope_qq * qq_x,
+        color=RED, linewidth=1.8, linestyle="--", label="Normal reference")
+ax.set_xlabel("Theoretical Quantiles")
+ax.set_ylabel("Standardized Residuals")
+ax.set_title("Normal Q–Q Plot")
+ax.legend(fontsize=8)
+
+# Panel 3 — Scale-Location
+ax = axes[1, 0]
+sqrt_resid = np.sqrt(np.abs(resid_std[idx]))
+ax.scatter(y_pred_train[idx], sqrt_resid,
+           alpha=0.05, s=5, color=BLUE, rasterized=True)
+si3 = np.argsort(y_pred_train[idx])
+sm3 = lowess(sqrt_resid[si3], y_pred_train[idx][si3], frac=0.2, return_sorted=True)
+ax.plot(sm3[:, 0], sm3[:, 1], color=RED, linewidth=2)
+ax.set_xlabel("Fitted Values")
+ax.set_ylabel(r"$\sqrt{|\text{Standardized Residuals}|}$")
+ax.set_title("Scale–Location")
+
+# Panel 4 — Residual histogram
+ax = axes[1, 1]
+ax.hist(resid, bins=60, color=GREEN, edgecolor="white",
+        linewidth=0.3, alpha=0.8, density=True)
+xr   = np.linspace(resid.min(), resid.max(), 300)
+norm_pdf = scipy_stats.norm.pdf(xr, resid.mean(), resid.std())
+ax.plot(xr, norm_pdf, color=RED, linewidth=2, linestyle="--",
+        label="Normal($\\mu$, $\\sigma$)")
+ax.set_xlabel("Residual Value")
+ax.set_ylabel("Density")
+ax.set_title("Residual Distribution")
+ax.legend(fontsize=8)
+ax.text(0.97, 0.95,
+        f"Skew = {float(pd.Series(resid).skew()):.3f}\n"
+        f"Kurt = {float(pd.Series(resid).kurtosis()):.3f}",
+        transform=ax.transAxes, ha="right", va="top", fontsize=8.5,
+        bbox=dict(facecolor="white", edgecolor=GRAY,
+                  boxstyle="round,pad=0.3", alpha=0.85))
+
+plt.tight_layout()
+plt.show()
+plt.savefig("ch4_diagnostics.png", dpi=300, bbox_inches="tight")
+
+# =============================================================================
+# FIGURE 2 — Coefficient plot for top 15 non-genre predictors
+# =============================================================================
+# Bootstrap 95% CI for each coefficient (500 resamples, subsample for speed)
+np.random.seed(42)
+n_boot   = 500
+sub_size = 20000   # subsample training rows for bootstrap speed
+sub_idx  = np.random.choice(X_tr_s.shape[0], sub_size, replace=False)
+X_sub    = X_tr_s[sub_idx]
+y_sub    = y_train.values[sub_idx]
+
+boot_coefs = np.zeros((n_boot, X_tr_s.shape[1]))
+for b in range(n_boot):
+    bi = np.random.choice(sub_size, sub_size, replace=True)
+    lrb = LinearRegression().fit(X_sub[bi], y_sub[bi])
+    boot_coefs[b] = lrb.coef_
+
+ci_lo_all = np.percentile(boot_coefs, 2.5,  axis=0)
+ci_hi_all = np.percentile(boot_coefs, 97.5, axis=0)
+
+# Get non-genre indices
+ng_mask = np.array([not f.startswith("genre_") for f in feat_names])
+ng_idx  = np.where(ng_mask)[0]
+top15_idx = ng_idx[
+    np.argsort(np.abs(lr.coef_[ng_mask]))[::-1][:15]
+]
+
+# Clean display names
+label_map = {
+    "danceability":    "Danceability",
+    "energy":          "Energy",
+    "loudness":        "Loudness",
+    "speechiness":     "Speechiness",
+    "acousticness":    "Acousticness",
+    "instrumentalness":"Instrumentalness",
+    "liveness":        "Liveness",
+    "valence":         "Valence",
+    "tempo":           "Tempo",
+    "log_duration":    "Log Duration",
+    "mode":            "Mode",
+    "explicit_int":    "Explicit",
+    "key_1":  "Key: C# (1)", "key_2": "Key: D (2)",
+    "key_3":  "Key: Eb (3)", "key_4": "Key: E (4)",
+    "key_5":  "Key: F (5)",  "key_6": "Key: F# (6)",
+    "key_7":  "Key: G (7)",  "key_8": "Key: Ab (8)",
+    "key_9":  "Key: A (9)",  "key_10":"Key: Bb (10)",
+    "key_11": "Key: B (11)",
+    "ts_3": "Time Sig: 3",   "ts_4": "Time Sig: 4",
+    "ts_5": "Time Sig: 5",
+}
+
+plot_coefs  = lr.coef_[top15_idx]
+plot_labels = [label_map.get(feat_names[i], feat_names[i]) for i in top15_idx]
+plot_lo     = ci_lo_all[top15_idx]
+plot_hi     = ci_hi_all[top15_idx]
+
+# Sort by coefficient value for readability
+sort_order  = np.argsort(plot_coefs)
+plot_coefs  = plot_coefs[sort_order]
+plot_labels = [plot_labels[i] for i in sort_order]
+plot_lo     = plot_lo[sort_order]
+plot_hi     = plot_hi[sort_order]
+y_pos       = np.arange(len(plot_coefs))
+
+fig, ax = plt.subplots(figsize=(9, 6.5), facecolor="white")
+
+bar_colors = [RED if c < 0 else GREEN for c in plot_coefs]
+ax.barh(y_pos, plot_coefs, color=bar_colors, alpha=0.8,
+        edgecolor="white", height=0.6)
+
+# Error bars (bootstrap CI)
+ax.errorbar(plot_coefs, y_pos,
+            xerr=[plot_coefs - plot_lo, plot_hi - plot_coefs],
+            fmt="none", color=DARK, capsize=3, linewidth=1.2, alpha=0.7)
+
+ax.axvline(0, color=DARK, linewidth=1.2, linestyle="-")
+ax.set_yticks(y_pos)
+ax.set_yticklabels(plot_labels, fontsize=9)
+ax.set_xlabel("Standardized Coefficient (with 95% Bootstrap CI)")
+ax.set_title("MLR Coefficient Plot — Top 15 Non-Genre Predictors\n"
+             "(Green = positive effect on popularity  |  Red = negative effect)",
+             fontweight="bold")
+
+green_p = mpatches.Patch(color=GREEN, label="Positive coefficient")
+red_p   = mpatches.Patch(color=RED,   label="Negative coefficient")
+ax.legend(handles=[green_p, red_p], fontsize=8, loc="lower right")
+
+plt.tight_layout()
+plt.show()
+plt.savefig("ch4_coef_plot.png", dpi=300, bbox_inches="tight")
+
+"""
+MATH 4230 — Capstone Project
+Chapter 5: Logistic Regression
+Author: Ezequiel Andrade
+
+Figures produced (display only — save manually):
+  Figure 1 — ch5_roc_pr.png        : ROC curve + Precision-Recall curve
+  Figure 2 — ch5_calibration.png   : calibration plot (reliability diagram)
+  Figure 3 — ch5_prob_dist.png     : predicted probability distributions by class
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (roc_curve, roc_auc_score, precision_recall_curve,
+                              average_precision_score, confusion_matrix,
+                              accuracy_score)
+from sklearn.calibration import calibration_curve
+import warnings
+
+warnings.filterwarnings("ignore")
+
+# ── Style ─────────────────────────────────────────────────────────────────────
+plt.rcParams.update({
+    "figure.dpi"       : 150,
+    "font.family"      : "serif",
+    "axes.spines.top"  : False,
+    "axes.spines.right": False,
+    "axes.titlesize"   : 11,
+    "axes.labelsize"   : 10,
+    "xtick.labelsize"  : 9,
+    "ytick.labelsize"  : 9,
+})
+
+GREEN = "#1ED760"
+DARK  = "#191414"
+GRAY  = "#787878"
+BLUE  = "#1262FF"
+RED   = "#E8394A"
+
+# ── Load & prepare ────────────────────────────────────────────────────────────
+df = pd.read_csv("spotify-tracks-dataset-detailed.csv")
+df = df.dropna(subset=["artists", "album_name", "track_name"]).reset_index(drop=True)
+df["is_popular"]     = (df["popularity"] > 35).astype(int)
+df["tempo"]          = df["tempo"].replace(0, np.nan).fillna(df["tempo"].replace(0,np.nan).median())
+df["time_signature"] = df["time_signature"].replace(0, np.nan).fillna(4.0)
+df["log_duration"]   = np.log(df["duration_ms"])
+df["explicit_int"]   = df["explicit"].astype(int)
+df["key_int"]        = df["key"].astype(int)
+df["ts_int"]         = df["time_signature"].astype(int)
+
+CONT = ["danceability","energy","loudness","speechiness","acousticness",
+        "instrumentalness","liveness","valence","tempo","log_duration"]
+BIN  = ["mode","explicit_int"]
+key_d   = pd.get_dummies(df["key_int"],     prefix="key",   drop_first=True)
+ts_d    = pd.get_dummies(df["ts_int"],      prefix="ts",    drop_first=True)
+genre_d = pd.get_dummies(df["track_genre"], prefix="genre", drop_first=True)
+
+X_full = pd.concat([df[CONT + BIN], key_d, ts_d, genre_d], axis=1).astype(float)
+yb = df["is_popular"]
+y  = df["popularity"]
+
+# ── Same stratified 70/15/15 split ───────────────────────────────────────────
+X_tv, X_test, y_tv, y_test, yb_tv, yb_test = train_test_split(
+    X_full, y, yb, test_size=0.15, random_state=42, stratify=yb)
+X_train, X_val, y_train, y_val, yb_train, yb_val = train_test_split(
+    X_tv, y_tv, yb_tv, test_size=0.15/0.85, random_state=42, stratify=yb_tv)
+
+scaler = StandardScaler()
+X_tr_s = scaler.fit_transform(X_train)
+X_te_s = scaler.transform(X_test)
+
+# ── Fit logistic regression ───────────────────────────────────────────────────
+lr = LogisticRegression(max_iter=1000, random_state=42, C=1.0)
+lr.fit(X_tr_s, yb_train)
+
+yb_prob  = lr.predict_proba(X_te_s)[:, 1]   # predicted probability of popular
+yb_pred  = lr.predict(X_te_s)
+
+print(f"Test Accuracy : {accuracy_score(yb_test, yb_pred):.5f}")
+print(f"Test ROC-AUC  : {roc_auc_score(yb_test, yb_prob):.5f}")
+print(f"Avg Precision : {average_precision_score(yb_test, yb_prob):.5f}")
+
+
+# =============================================================================
+# FIGURE 1 — ROC curve + Precision-Recall curve (side by side)
+# =============================================================================
+fpr, tpr, _       = roc_curve(yb_test, yb_prob)
+auc_val           = roc_auc_score(yb_test, yb_prob)
+precision, recall, _ = precision_recall_curve(yb_test, yb_prob)
+ap_val            = average_precision_score(yb_test, yb_prob)
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor="white")
+
+# Left — ROC
+ax = axes[0]
+ax.plot(fpr, tpr, color=BLUE, linewidth=2.2,
+        label=f"Logistic Regression (AUC = {auc_val:.3f})")
+ax.plot([0, 1], [0, 1], color=GRAY, linewidth=1.2,
+        linestyle="--", label="Random classifier (AUC = 0.500)")
+ax.fill_between(fpr, tpr, alpha=0.08, color=BLUE)
+ax.set_xlabel("False Positive Rate (1 − Specificity)")
+ax.set_ylabel("True Positive Rate (Sensitivity / Recall)")
+ax.set_title("ROC Curve", fontweight="bold")
+ax.legend(fontsize=9, loc="lower right")
+ax.set_xlim(0, 1)
+ax.set_ylim(0, 1.01)
+
+# Annotate the point at threshold = 0.50
+thresh_idx = np.argmin(np.abs(np.linspace(0, 1, len(fpr)) - 0.5))
+# Find operating point closest to (0.26, 0.76) empirically
+op_fpr = 1 - 0.742   # 1 - specificity at default threshold
+op_tpr = 0.760       # recall at default threshold
+ax.scatter([op_fpr], [op_tpr], color=RED, zorder=5, s=60,
+           label="Threshold = 0.50")
+ax.legend(fontsize=9, loc="lower right")
+
+# Right — Precision-Recall
+ax2 = axes[1]
+ax2.plot(recall, precision, color=GREEN, linewidth=2.2,
+         label=f"Logistic Regression (AP = {ap_val:.3f})")
+baseline = yb_test.mean()
+ax2.axhline(baseline, color=GRAY, linewidth=1.2, linestyle="--",
+            label=f"Random classifier (AP ≈ {baseline:.3f})")
+ax2.fill_between(recall, precision, alpha=0.08, color=GREEN)
+ax2.set_xlabel("Recall")
+ax2.set_ylabel("Precision")
+ax2.set_title("Precision–Recall Curve", fontweight="bold")
+ax2.legend(fontsize=9, loc="lower left")
+ax2.set_xlim(0, 1)
+ax2.set_ylim(0, 1.01)
+
+plt.tight_layout()
+plt.savefig("ch5_roc_pr.png", dpi=300, bbox_inches="tight")
+
+
+# =============================================================================
+# FIGURE 2 — Calibration plot (reliability diagram)
+# =============================================================================
+fraction_of_positives, mean_predicted_value = calibration_curve(
+    yb_test, yb_prob, n_bins=10, strategy="quantile")
+
+fig, ax = plt.subplots(figsize=(7, 6), facecolor="white")
+
+ax.plot(mean_predicted_value, fraction_of_positives,
+        marker="o", markersize=8, color=BLUE, linewidth=2.2,
+        label="Logistic Regression")
+ax.plot([0, 1], [0, 1], color=GRAY, linestyle="--",
+        linewidth=1.5, label="Perfect calibration")
+
+# Shade the region between model and perfect calibration
+ax.fill_between(mean_predicted_value,
+                fraction_of_positives,
+                mean_predicted_value,
+                alpha=0.12, color=BLUE)
+
+# Add point labels
+for x, y_pt in zip(mean_predicted_value, fraction_of_positives):
+    ax.text(x + 0.01, y_pt + 0.01, f"({x:.2f}, {y_pt:.2f})",
+            fontsize=7.5, color=DARK)
+
+ax.set_xlabel("Mean Predicted Probability")
+ax.set_ylabel("Observed Fraction of Popular Tracks")
+ax.set_title("Calibration Plot — Logistic Regression\n"
+             "(10 equal-frequency bins)", fontweight="bold")
+ax.legend(fontsize=9)
+ax.set_xlim(0, 1)
+ax.set_ylim(0, 1)
+
+plt.tight_layout()
+plt.savefig("ch5_calibration.png", dpi=300, bbox_inches="tight")
+
+# =============================================================================
+# FIGURE 3 — Predicted probability distributions by true class
+# =============================================================================
+pop_probs    = yb_prob[yb_test.values == 1]   # popular tracks
+notpop_probs = yb_prob[yb_test.values == 0]   # not-popular tracks
+
+fig, ax = plt.subplots(figsize=(9, 5), facecolor="white")
+
+bins = np.linspace(0, 1, 41)
+
+ax.hist(notpop_probs, bins=bins, alpha=0.65, color=GRAY,
+        edgecolor="white", linewidth=0.3,
+        label=f"Not Popular (n = {len(notpop_probs):,})",
+        density=True)
+ax.hist(pop_probs, bins=bins, alpha=0.65, color=GREEN,
+        edgecolor="white", linewidth=0.3,
+        label=f"Popular (n = {len(pop_probs):,})",
+        density=True)
+
+# Default threshold
+ax.axvline(0.50, color=RED, linewidth=2, linestyle="--",
+           label="Threshold = 0.50")
+
+# Annotate overlap region
+ax.axvspan(0.35, 0.65, alpha=0.06, color=RED,
+           label="High-ambiguity region (0.35 – 0.65)")
+
+ax.set_xlabel("Predicted Probability of Being Popular")
+ax.set_ylabel("Density")
+ax.set_title("Predicted Probability Distributions by True Class\n"
+             "(Logistic Regression, Test Set)", fontweight="bold")
+ax.legend(fontsize=9)
+ax.set_xlim(0, 1)
+
+# Annotation box with key stats
+ax.text(0.02, 0.97,
+        f"Accuracy  = 0.751\n"
+        f"ROC-AUC   = 0.839\n"
+        f"Avg Prec  = 0.836",
+        transform=ax.transAxes, va="top", fontsize=9,
+        bbox=dict(facecolor="white", edgecolor=GRAY,
+                  boxstyle="round,pad=0.4", alpha=0.9))
+
+plt.tight_layout()
+plt.savefig("ch5_prob_dist.png", dpi=300, bbox_inches="tight")
